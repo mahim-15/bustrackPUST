@@ -42,3 +42,6 @@ Thumbs.db
 
 # Coverage
 coverage/
+# Environment variables
+.env
+.env.*
