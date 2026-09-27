@@ -1,16 +1,60 @@
-# React + Vite
+# PUST Bus Tracker
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Live university bus tracking with student email verification, community GPS sharing, contribution points, and route comments.
 
-Currently, two official plugins are available:
+## Requirements
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Node.js 20.19+ or 22.12+
+- MySQL 8+
+- SMTP credentials for institutional email verification
 
-## React Compiler
+## Setup
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+1. Install frontend dependencies from the repository root:
 
-## Expanding the ESLint configuration
+   ```sh
+   npm install
+   ```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+2. Create the database and tables:
+
+   ```sh
+   mysql -u root -p < server/schema.sql
+   ```
+
+3. Copy `server/.env.example` to `server/.env` and configure MySQL, SMTP, `JWT_SECRET`, and `OTP_SECRET`. Keep `server/.env` private.
+
+4. Install backend dependencies:
+
+   ```sh
+   cd server
+   npm install
+   ```
+
+## Run locally
+
+Start the API and live tracking sockets in one terminal:
+
+```sh
+cd server
+npm run dev
+```
+
+Start the Vite frontend in another terminal from the repository root:
+
+```sh
+npm run dev
+```
+
+Open the URL printed by Vite. Its development proxy forwards API and Socket.IO traffic to `http://localhost:5000`.
+
+## Checks
+
+```sh
+npm run build
+npm run lint
+cd server
+npm test
+```
+
+Location sharing requires browser GPS permission and HTTPS outside localhost. Students earn one point per accepted contribution session; only the contributor can post that session's optional comment (up to 50 words).
