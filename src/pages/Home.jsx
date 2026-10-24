@@ -1,210 +1,264 @@
-import { useMemo, useState } from 'react';
+
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import Sidebar from '../components/Sidebar.jsx';
+import { api } from '../api/client.js';
 import { useAuth } from '../context/useAuth.js';
+import { getBusScheduleStatus, sortRoutesBySchedule } from '../utils/busSchedule.js';
 
-const routeCards = [
-  {
-    id: 'campus-ononto-sohor-campus',
-    name: 'Campus - Ononto - Sohor - Campus',
-    schedule: '7.00 p.m. - 8.00 p.m. / 8.15 p.m. - 9.00 p.m.',
-    status: 'On schedule',
-    next: 'Next departure: 07:30 AM',
-  },
-  {
-    id: 'campus-meril-sohor-campus',
-    name: 'Campus - Meril - Sohor - Campus',
-    schedule: '7.00 p.m. - 8.00 p.m. / 8.15 p.m. - 9.00 p.m.',
-    status: 'On schedule',
-    next: 'Next departure: 08:00 AM',
-  },
-];
+function formatTime(time) {
+  const [hours, minutes] = time.split(':').map(Number);
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
 
-export default function Home({ darkMode, setDarkMode }) {
+export default function Home() {
+  const { user } = useAuth();
+
+  const [routes, setRoutes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [query, setQuery] = useState('');
-  const { user, logout } = useAuth();
+  const [registeredCount, setRegisteredCount] = useState(null);
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Fetch bus routes
+  useEffect(() => {
+    let cancelled = false;
+
+    api.getRoutes()
+      .then((result) => {
+        if (!cancelled) setRoutes(result);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Fetch total registered users (distinct email addresses)
+  useEffect(() => {
+    let cancelled = false;
+
+    api.getRegisteredStudentCount()
+      .then((data) => {
+        if (!cancelled) {
+          setRegisteredCount(data.total);
+        }
+      })
+      .catch((err) => {
+        console.error('Could not load registered user count:', err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filteredRoutes = useMemo(() => {
-    if (!query.trim()) return routeCards;
-    const q = query.toLowerCase();
-    return routeCards.filter((route) => route.name.toLowerCase().includes(q));
-  }, [query]);
+    const q = query.trim().toLowerCase();
 
-  const todayLabel = new Date().toLocaleDateString(undefined, {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
+    const matchingRoutes = !q ? routes : routes.filter(
+      (route) =>
+        route.name.toLowerCase().includes(q) ||
+        (route.description || '').toLowerCase().includes(q)
+    );
+    return sortRoutesBySchedule(matchingRoutes, new Date(currentTime));
+  }, [routes, query, currentTime]);
+
+  const busCount = routes.reduce(
+    (total, route) => total + (route.buses?.length || 0),
+    0
+  );
+
+  const stats = [
+    [
+      'Total Registered Users',
+      registeredCount === null ? '–' : String(registeredCount),
+    ],
+    ['Routes', loading ? '–' : String(routes.length)],
+    ['Buses', loading ? '–' : String(busCount)],
+    ['Access', 'Verified'],
+  ];
 
   return (
-    <div className={darkMode ? 'dark' : ''}>
-      <div className="min-h-screen bg-[#edf4ef] text-[#122218] transition-colors duration-200 dark:bg-[#07110f] dark:text-[#edf7f2]">
-        <div className="mx-auto flex max-w-[1700px]">
-          <Sidebar />
+    <main className="mx-auto max-w-6xl space-y-6 px-4 py-6 md:px-8 md:py-8">
+      <section className="overflow-hidden rounded-[28px] bg-gradient-to-br from-brand via-[#0d7a4d] to-[#071d18] p-6 text-white shadow-lg md:p-9">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <span className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-live" />
+              Live university bus transport
+            </span>
 
-          <main className="min-h-screen flex-1">
-            <header className="flex items-center justify-between border-b border-[#dfeae4] bg-white/90 px-4 py-5 backdrop-blur-sm md:px-8 dark:border-[#16332d] dark:bg-[#0d1715]/90">
-              <div>
-                <div className="flex items-center gap-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#557066] dark:text-[#9fe0be]">
-                  <span>Home</span>
-                  <span className="inline-block h-1 w-1 rounded-full bg-[#0b5d3b]" />
-                  <span>Track by route</span>
-                </div>
-                <h1 className="mt-2 text-2xl font-semibold text-[#101f18] dark:text-white">
-                  university bus tracking
-                </h1>
-              </div>
+            <h1 className="mt-4 text-3xl font-bold leading-tight md:text-5xl">
+              PUST Bus Tracker
+            </h1>
 
-              <div className="flex items-center gap-3">
-                <div className="hidden items-center gap-2 rounded-xl border border-[#dfeae4] bg-[#f7faf8] px-3 py-2 text-sm text-[#49635b] shadow-sm md:flex dark:border-[#16332d] dark:bg-[#102620] dark:text-[#dff4e8]">
-                  📅 {todayLabel}
-                </div>
-                <button
-                  type="button"
-                  aria-label="Toggle theme"
-                  onClick={() => setDarkMode(!darkMode)}
-                  className="grid h-10 w-10 place-items-center rounded-xl border border-[#dfeae4] bg-white text-lg text-[#123528] shadow-sm transition hover:bg-[#eff7f0] dark:border-[#16332d] dark:bg-[#102620] dark:text-[#dff4e8]"
-                >
-                  {darkMode ? '☀️' : '🌙'}
-                </button>
-                {user ? (
-                  <div className="flex items-center gap-3">
-                    <span className="hidden text-sm font-semibold text-[#123528] sm:inline dark:text-[#dff4e8]">
-                      {user.name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={logout}
-                      className="rounded-xl border border-[#dfeae4] bg-white px-4 py-2 text-sm font-semibold text-[#123528] transition hover:bg-[#eff7f0] dark:border-[#16332d] dark:bg-[#102620] dark:text-[#dff4e8]"
-                    >
-                      Log out
-                    </button>
-                  </div>
-                ) : (
-                  <Link
-                    to="/login"
-                    className="rounded-xl bg-[#0b5d3b] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(11,93,59,0.18)] transition hover:bg-[#084a2f]"
-                  >
-                    Student login
-                  </Link>
-                )}
-              </div>
-            </header>
+            <p className="mt-4 max-w-xl text-base text-white/85">
+              See where your university bus is right now. Access is limited
+              to verified students with a PUST institutional email.
+            </p>
+          </div>
 
-            <div className="px-4 py-6 md:px-8 md:py-8">
-              <section className="overflow-hidden rounded-[28px] border border-[#0b5d3b]/10 bg-gradient-to-br from-[#0b5d3b] via-[#0d7a4d] to-[#071d18] px-6 py-7 text-white shadow-[0_20px_40px_rgba(11,93,59,0.18)] md:px-8">
-                <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-                  <div className="max-w-[720px]">
-                    <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-100">
-                      <span className="h-2 w-2 rounded-full bg-[#5ef0a2]" />
-                      Live university bus transport
-                    </div>
-                    <h2 className="text-3xl font-semibold leading-tight md:text-5xl">PUST Bus Tracker</h2>
-                    <p className="mt-4 max-w-xl text-base text-emerald-50/90">
-                      Monitor the university bus routes in real time. Access is restricted to verified students with an official PUST institutional email account.
-                    </p>
-                  </div>
+          <div className="flex flex-wrap gap-3">
+            <Link
+              to={user ? '/routes' : '/login'}
+              className="rounded-xl bg-white px-5 py-3 text-sm font-bold text-brand shadow transition hover:bg-white/90"
+            >
+              {user ? 'Track buses' : 'Register now'}
+            </Link>
 
-                  <div className="flex flex-wrap gap-3">
-                    {user ? (
-                      <Link
-                        to="/routes"
-                        className="rounded-xl bg-[#a7f3d0] px-4 py-2.5 text-sm font-semibold text-[#064e3b] shadow-sm transition hover:bg-[#6ee7b7] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-                      >
-                        Track buses
-                      </Link>
-                    ) : (
-                      <Link
-                        to="/login"
-                        className="rounded-xl bg-[#a7f3d0] px-4 py-2.5 text-sm font-semibold text-[#064e3b] shadow-sm transition hover:bg-[#6ee7b7] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-                      >
-                        Register now
-                      </Link>
-                    )}
-                    <Link to="/routes" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur-sm">
-                      View routes
-                    </Link>
-                  </div>
-                </div>
-
-                <div className="mt-8 grid gap-3 border-t border-white/10 pt-5 sm:grid-cols-3">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.2em] text-emerald-100/80">Routes</div>
-                    <div className="mt-2 text-2xl font-semibold">2</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.2em] text-emerald-100/80">Access</div>
-                    <div className="mt-2 text-2xl font-semibold">Verified</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.2em] text-emerald-100/80">Status</div>
-                    <div className="mt-2 text-2xl font-semibold">Live</div>
-                  </div>
-                </div>
-              </section>
-
-              <section className="mt-7 rounded-[24px] border border-[#dfeae4] bg-white p-4 shadow-sm md:p-5 dark:border-[#16332d] dark:bg-[#0d1715]">
-                <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#557066] dark:text-[#9fe0be]">Track by route</p>
-                    <h3 className="mt-2 text-xl font-semibold text-[#122218] dark:text-white">Available university bus routes</h3>
-                  </div>
-                  <div className="flex-1 max-w-md">
-                    <input
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                      placeholder="Search route name"
-                      className="w-full rounded-xl border border-[#dfeae4] bg-[#f7faf8] px-4 py-3 text-sm text-[#123528] outline-none transition placeholder:text-[#6d7d77] focus:border-[#0b5d3b] focus:ring-2 focus:ring-[#c8ead7] dark:border-[#16332d] dark:bg-[#0f1d1a] dark:text-[#edf7f2] dark:placeholder:text-[#9bb6ae]"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid gap-4 lg:grid-cols-2">
-                  {filteredRoutes.map((route) => (
-                    <article key={route.id} className="rounded-[22px] border border-[#dfeae4] bg-[#f9fbf9] p-5 shadow-[0_10px_24px_rgba(18,36,29,0.02)] dark:border-[#16332d] dark:bg-[#0d1a18]">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#6a7d75] dark:text-[#9bb6ae]">Route</p>
-                          <h4 className="mt-2 text-xl font-semibold text-[#133327] dark:text-white">{route.name}</h4>
-                        </div>
-                        <span className="rounded-full bg-[#e7f3ea] px-2.5 py-1 text-xs font-semibold text-[#0b5d3b] dark:bg-[#102922] dark:text-[#9fe0be]">
-                          {route.status}
-                        </span>
-                      </div>
-
-                      <div className="mt-4 rounded-2xl border border-[#dfeae4] bg-white p-3 text-sm text-[#45615a] dark:border-[#18342d] dark:bg-[#112925] dark:text-[#dff4e8]">
-                        <div className="flex items-center justify-between gap-3">
-                          <span>Schedule</span>
-                          <span className="font-medium text-[#0d5c3b] dark:text-[#9fe0be]">{route.schedule}</span>
-                        </div>
-                        <div className="mt-2 flex items-center justify-between gap-3">
-                          <span>Next departure</span>
-                          <span className="font-medium text-[#0d5c3b] dark:text-[#9fe0be]">{route.next}</span>
-                        </div>
-                      </div>
-
-                      <div className="mt-5 flex items-center justify-between">
-                        <span className="text-sm text-[#506a63] dark:text-[#cfe6dc]">Verified students only</span>
-                        <Link
-                          to="/routes"
-                          className="rounded-xl bg-[#0b5d3b] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(11,93,59,0.15)] hover:bg-[#084a2f]"
-                        >
-                          Track route
-                        </Link>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-
-                {filteredRoutes.length === 0 && (
-                  <p className="mt-4 text-sm text-[#5f726a] dark:text-[#cfe6dc]">No route matches your search.</p>
-                )}
-              </section>
-            </div>
-          </main>
+            <Link
+              to="/routes"
+              className="rounded-xl border border-white/30 bg-white/10 px-5 py-3 text-sm font-semibold backdrop-blur transition hover:bg-white/20"
+            >
+              View routes
+            </Link>
+          </div>
         </div>
-      </div>
-    </div>
+
+        {/* Home page statistics */}
+        <dl className="mt-8 grid grid-cols-2 gap-4 border-t border-white/15 pt-5 sm:grid-cols-4">
+          {stats.map(([label, value]) => (
+            <div key={label} className="min-w-0">
+              <dt className="text-xs text-white/70">
+                {label}
+              </dt>
+              <dd className="mt-1 break-words text-xl font-bold md:text-2xl">
+                {value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      <section className="rounded-card border border-line bg-surface p-4 md:p-6">
+        <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-xl font-bold">Bus routes</h2>
+            <p className="mt-1 text-sm text-fg-muted">
+              Pick a route to see its buses and where they are.
+            </p>
+          </div>
+
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search route name"
+            aria-label="Search route name"
+            className="w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg outline-none transition placeholder:text-fg-muted focus:border-brand-2 focus:ring-2 focus:ring-brand-2/30 md:max-w-sm"
+          />
+        </div>
+
+        {error && (
+          <p
+            role="alert"
+            className="mb-4 rounded-xl border border-red-300/60 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+          >
+            {error}
+          </p>
+        )}
+
+        {loading && (
+          <p className="text-sm text-fg-muted">Loading routes…</p>
+        )}
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          {filteredRoutes.map((route) => {
+            const scheduleStatus = getBusScheduleStatus(route.schedules, new Date(currentTime));
+            const next = scheduleStatus
+              ? scheduleStatus.running
+                ? `Scheduled now · until ${formatTime(scheduleStatus.schedule.arrivalTime)}`
+                : `${scheduleStatus.nextDay ? 'Tomorrow' : 'Today'} at ${formatTime(scheduleStatus.schedule.departureTime)}`
+              : null;
+
+            return (
+              <article
+                key={route.id}
+                className="flex flex-col rounded-2xl border border-line bg-surface-2 p-5"
+              >
+                <h3 className="text-lg font-bold leading-snug">
+                  {route.name}
+                </h3>
+                {scheduleStatus?.running && (
+                  <span className="mt-2 w-fit rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-800 dark:bg-green-950/50 dark:text-green-300">
+                    Scheduled now
+                  </span>
+                )}
+
+                {route.description && (
+                  <p className="mt-1 text-sm text-fg-muted">
+                    {route.description}
+                  </p>
+                )}
+
+                <dl className="mt-4 space-y-2 rounded-xl border border-line bg-surface p-3 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-fg-muted">Bus times</dt>
+                    <dd className="text-right font-medium">
+                      {route.schedules?.length
+                        ? route.schedules
+                            .map((schedule) =>
+                              formatTime(schedule.departureTime)
+                            )
+                            .join(' · ')
+                        : 'Not announced'}
+                    </dd>
+                  </div>
+
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-fg-muted">Next departure</dt>
+                    <dd className="font-medium">{next ?? '–'}</dd>
+                  </div>
+
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-fg-muted">Buses</dt>
+                    <dd className="font-medium">
+                      {route.buses?.length || 0}
+                    </dd>
+                  </div>
+                </dl>
+
+                <div className="mt-5 flex items-center justify-between gap-3">
+                  <span className="text-sm text-fg-muted">
+                    Verified students only
+                  </span>
+
+                  <Link
+                    to={route.busId ? `/track/${route.busId}` : '/routes'}
+                    className="rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
+                  >
+                    Track route
+                  </Link>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+
+        {!loading && !error && filteredRoutes.length === 0 && (
+          <p className="text-sm text-fg-muted">
+            {routes.length
+              ? 'No route matches your search.'
+              : 'No routes have been added yet.'}
+          </p>
+        )}
+      </section>
+    </main>
   );
 }

@@ -59,6 +59,26 @@ async function startServer() {
     )`
   );
   await pool.query(
+    `CREATE TABLE IF NOT EXISTS route_schedules (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      route_id INT NOT NULL,
+      departure_time TIME NOT NULL,
+      arrival_time TIME NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_route_schedule_departure (route_id, departure_time),
+      FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE
+    )`
+  );
+  await pool.query(
+    `INSERT IGNORE INTO route_schedules (route_id, departure_time, arrival_time)
+     SELECT id, '07:30:00', '09:30:00' FROM routes WHERE name = 'Route R1'
+     UNION ALL SELECT id, '12:00:00', '14:30:00' FROM routes WHERE name = 'Route R1'
+     UNION ALL SELECT id, '08:00:00', '10:00:00' FROM routes WHERE name = 'Route R2'
+     UNION ALL SELECT id, '13:00:00', '15:00:00' FROM routes WHERE name = 'Route R2'
+     UNION ALL SELECT id, '09:00:00', '11:00:00' FROM routes WHERE name = 'Route R3'
+     UNION ALL SELECT id, '14:00:00', '16:00:00' FROM routes WHERE name = 'Route R3'`
+  );
+  await pool.query(
     `CREATE TABLE IF NOT EXISTS route_comments (
       id INT AUTO_INCREMENT PRIMARY KEY,
       bus_id INT NOT NULL,

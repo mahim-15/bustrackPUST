@@ -1,23 +1,56 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth.js';
 
 const institutionalEmailPattern = /^[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*pust\.ac\.bd$/i;
+const registrationDraftKey = 'pust_registration_draft';
+
+function readRegistrationDraft() {
+  try {
+    const saved = sessionStorage.getItem(registrationDraftKey);
+    if (!saved) return {};
+    const draft = JSON.parse(saved);
+    return draft && typeof draft === 'object' ? draft : {};
+  } catch (err) {
+    console.warn('Could not restore the registration draft.', err);
+    return {};
+  }
+}
 
 export default function Login() {
-  const [mode, setMode] = useState('register');
-  const [fullName, setFullName] = useState('');
-  const [studentId, setStudentId] = useState('');
-  const [email, setEmail] = useState('');
+  const [draft] = useState(readRegistrationDraft);
+  const [mode, setMode] = useState(draft.mode === 'login' ? 'login' : 'register');
+  const [fullName, setFullName] = useState(typeof draft.fullName === 'string' ? draft.fullName : '');
+  const [studentId, setStudentId] = useState(typeof draft.studentId === 'string' ? draft.studentId : '');
+  const [email, setEmail] = useState(typeof draft.email === 'string' ? draft.email : '');
   const [otp, setOtp] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
-  const [emailVerified, setEmailVerified] = useState(false);
+  const [otpSent, setOtpSent] = useState(Boolean(draft.otpSent));
+  const [emailVerified, setEmailVerified] = useState(Boolean(draft.emailVerified));
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const { login, register, requestEmailOtp, verifyEmailOtp } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    try {
+      if (mode !== 'register') {
+        sessionStorage.removeItem(registrationDraftKey);
+        return;
+      }
+      sessionStorage.setItem(registrationDraftKey, JSON.stringify({
+        mode,
+        fullName,
+        studentId,
+        email,
+        otpSent,
+        emailVerified,
+      }));
+    } catch (err) {
+      console.warn('Could not save the registration draft.', err);
+    }
+  }, [mode, fullName, studentId, email, otpSent, emailVerified]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -42,9 +75,10 @@ export default function Login() {
         setMode('login');
         return;
       } else {
-        await login(email, password);
+        const loggedInUser = await login(email, password);
+        navigate(loggedInUser.role === 'admin' ? '/admin' : '/routes');
+        return;
       }
-      navigate('/routes');
     } catch (err) {
       setError(
         err.message

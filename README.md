@@ -31,6 +31,16 @@ Live university bus tracking with student email verification, community GPS shar
    npm install
    ```
 
+## Admin access
+
+Create a normal account with a verified PUST email first. To make that account an administrator, connect to the configured MySQL database and run:
+
+```sql
+UPDATE users SET role = 'admin' WHERE email = 'admin@pust.ac.bd';
+```
+
+The account must sign out and sign in again to receive an administrator token. Open `/admin` directly; the admin panel is not linked in public navigation, and its write endpoints require an administrator token. Administrators can create routes (which also create an active bus) and add departure/arrival times. The route list and schedules at `/routes` are public and can be shared; live tracking and GPS contribution still require sign-in.
+
 ## Run locally
 
 Start the API and live tracking sockets in one terminal:

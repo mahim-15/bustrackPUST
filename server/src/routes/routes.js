@@ -7,8 +7,42 @@ const router = express.Router();
 // Public reads — the map screen needs these without login
 
 router.get('/routes', async (req, res) => {
-  const [routes] = await pool.query('SELECT * FROM routes');
-  res.json(routes);
+  const [routes] = await pool.query(
+    'SELECT r.id, r.name, r.description FROM routes r ORDER BY r.id'
+  );
+  const [buses] = await pool.query(
+    `SELECT id, route_id AS routeId, bus_number AS busNumber
+     FROM buses WHERE status = 'active' ORDER BY id`
+  );
+  const [schedules] = await pool.query(
+    `SELECT id, route_id AS routeId,
+       TIME_FORMAT(departure_time, '%H:%i') AS departureTime,
+       TIME_FORMAT(arrival_time, '%H:%i') AS arrivalTime
+     FROM route_schedules ORDER BY departure_time`
+  );
+  const schedulesByRoute = new Map();
+  const busesByRoute = new Map();
+  for (const bus of buses) {
+    const routeBuses = busesByRoute.get(bus.routeId) || [];
+    routeBuses.push({ id: bus.id, busNumber: bus.busNumber });
+    busesByRoute.set(bus.routeId, routeBuses);
+  }
+  for (const schedule of schedules) {
+    const routeSchedules = schedulesByRoute.get(schedule.routeId) || [];
+    routeSchedules.push({
+      id: schedule.id,
+      departureTime: schedule.departureTime,
+      arrivalTime: schedule.arrivalTime,
+    });
+    schedulesByRoute.set(schedule.routeId, routeSchedules);
+  }
+  res.json(routes.map((route) => ({
+    ...route,
+    buses: busesByRoute.get(route.id) || [],
+    busId: busesByRoute.get(route.id)?.[0]?.id || null,
+    busNumber: busesByRoute.get(route.id)?.[0]?.busNumber || null,
+    schedules: schedulesByRoute.get(route.id) || [],
+  })));
 });
 
 router.get('/routes/:id/stops', async (req, res) => {
@@ -21,7 +55,7 @@ router.get('/routes/:id/stops', async (req, res) => {
 
 router.get('/buses/:id', async (req, res) => {
   const [buses] = await pool.query(
-    `SELECT b.*, r.name AS route_name
+    `SELECT b.*, COALESCE(NULLIF(r.description, ''), r.name) AS route_name
      FROM buses b LEFT JOIN routes r ON b.route_id = r.id
      WHERE b.id = ?`,
     [req.params.id]
@@ -137,12 +171,160 @@ router.get('/buses', async (req, res) => {
 // Admin-only writes
 
 router.post('/routes', verifyToken, requireRole('admin'), async (req, res) => {
-  const { name, description } = req.body;
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
+  const busNumber = typeof req.body?.busNumber === 'string' ? req.body.busNumber.trim() : '';
+  if (!name || name.length > 100 || description.length > 2000 || !busNumber || busNumber.length > 20) {
+    return res.status(400).json({ error: 'Enter a route name (up to 100 characters), itinerary (up to 2000 characters), and bus name (up to 20 characters)' });
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [routeResult] = await connection.query(
+      'INSERT INTO routes (name, description) VALUES (?, ?)',
+      [name, description || null]
+    );
+    await connection.query(
+      'INSERT INTO buses (bus_number, route_id) VALUES (?, ?)',
+      [busNumber, routeResult.insertId]
+    );
+    await connection.commit();
+    res.status(201).json({
+      id: routeResult.insertId,
+      name,
+      description: description || null,
+      busNumber,
+      schedules: [],
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error(error);
+    res.status(500).json({ error: 'Could not create route' });
+  } finally {
+    connection.release();
+  }
+});
+
+router.post('/routes/:id/schedules', verifyToken, requireRole('admin'), async (req, res) => {
+  const routeId = Number(req.params.id);
+  const { departureTime, arrivalTime } = req.body || {};
+  const isValidTime = (value) => typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+  if (!Number.isInteger(routeId) || routeId < 1) {
+    return res.status(400).json({ error: 'Invalid route ID' });
+  }
+  if (!isValidTime(departureTime) || !isValidTime(arrivalTime)) {
+    return res.status(400).json({ error: 'Enter valid departure and arrival times' });
+  }
+
+  try {
+    const [result] = await pool.query(
+      'INSERT INTO route_schedules (route_id, departure_time, arrival_time) VALUES (?, ?, ?)',
+      [routeId, departureTime, arrivalTime]
+    );
+    res.status(201).json({
+      id: result.insertId,
+      routeId,
+      departureTime,
+      arrivalTime,
+    });
+  } catch (error) {
+    if (error.code === 'ER_NO_REFERENCED_ROW_2') {
+      return res.status(404).json({ error: 'Route not found' });
+    }
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'A bus time already exists for that departure time' });
+    }
+    throw error;
+  }
+});
+
+router.patch('/routes/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  const routeId = Number(req.params.id);
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
+  if (!Number.isInteger(routeId) || routeId < 1) {
+    return res.status(400).json({ error: 'Invalid route ID' });
+  }
+  if (!name || name.length > 100 || description.length > 2000) {
+    return res.status(400).json({ error: 'Enter a route name up to 100 characters and route details up to 2000 characters' });
+  }
+
   const [result] = await pool.query(
-    'INSERT INTO routes (name, description) VALUES (?, ?)',
-    [name, description || null]
+    'UPDATE routes SET name = ?, description = ? WHERE id = ?',
+    [name, description || null, routeId]
   );
-  res.status(201).json({ id: result.insertId, name, description });
+  if (!result.affectedRows) {
+    const [rows] = await pool.query('SELECT id FROM routes WHERE id = ?', [routeId]);
+    if (!rows.length) return res.status(404).json({ error: 'Route not found' });
+  }
+  res.json({ id: routeId, name, description: description || null });
+});
+
+router.delete('/routes/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  const routeId = Number(req.params.id);
+  if (!Number.isInteger(routeId) || routeId < 1) {
+    return res.status(400).json({ error: 'Invalid route ID' });
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [routes] = await connection.query('SELECT id FROM routes WHERE id = ? FOR UPDATE', [routeId]);
+    if (!routes.length) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Route not found' });
+    }
+    await connection.query('DELETE FROM buses WHERE route_id = ?', [routeId]);
+    await connection.query('DELETE FROM routes WHERE id = ?', [routeId]);
+    await connection.commit();
+    res.json({ id: routeId, deleted: true });
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+});
+
+router.patch('/schedules/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  const scheduleId = Number(req.params.id);
+  const { departureTime, arrivalTime } = req.body || {};
+  const isValidTime = (value) => typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+  if (!Number.isInteger(scheduleId) || scheduleId < 1) {
+    return res.status(400).json({ error: 'Invalid schedule ID' });
+  }
+  if (!isValidTime(departureTime) || !isValidTime(arrivalTime)) {
+    return res.status(400).json({ error: 'Enter valid departure and arrival times' });
+  }
+
+  try {
+    const [result] = await pool.query(
+      'UPDATE route_schedules SET departure_time = ?, arrival_time = ? WHERE id = ?',
+      [departureTime, arrivalTime, scheduleId]
+    );
+    if (!result.affectedRows) {
+      const [rows] = await pool.query('SELECT id FROM route_schedules WHERE id = ?', [scheduleId]);
+      if (!rows.length) return res.status(404).json({ error: 'Bus time not found' });
+    }
+    res.json({ id: scheduleId, departureTime, arrivalTime });
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'A bus time already exists for that departure time' });
+    }
+    throw error;
+  }
+});
+
+router.delete('/schedules/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  const scheduleId = Number(req.params.id);
+  if (!Number.isInteger(scheduleId) || scheduleId < 1) {
+    return res.status(400).json({ error: 'Invalid schedule ID' });
+  }
+
+  const [result] = await pool.query('DELETE FROM route_schedules WHERE id = ?', [scheduleId]);
+  if (!result.affectedRows) return res.status(404).json({ error: 'Bus time not found' });
+  res.json({ id: scheduleId, deleted: true });
 });
 
 router.post('/routes/:id/stops', verifyToken, requireRole('admin'), async (req, res) => {
@@ -155,12 +337,65 @@ router.post('/routes/:id/stops', verifyToken, requireRole('admin'), async (req, 
 });
 
 router.post('/buses', verifyToken, requireRole('admin'), async (req, res) => {
-  const { busNumber, routeId } = req.body;
+  const busNumber = typeof req.body?.busNumber === 'string' ? req.body.busNumber.trim() : '';
+  const routeId = Number(req.body?.routeId);
+  if (!busNumber || busNumber.length > 20) {
+    return res.status(400).json({ error: 'Enter a bus name up to 20 characters long' });
+  }
+  if (!Number.isInteger(routeId) || routeId < 1) {
+    return res.status(400).json({ error: 'Select a valid route for this bus' });
+  }
+
+  try {
+    const [result] = await pool.query(
+      'INSERT INTO buses (bus_number, route_id) VALUES (?, ?)',
+      [busNumber, routeId]
+    );
+    res.status(201).json({ id: result.insertId, busNumber, routeId });
+  } catch (error) {
+    if (error.code === 'ER_NO_REFERENCED_ROW_2') {
+      return res.status(404).json({ error: 'Route not found' });
+    }
+    throw error;
+  }
+});
+
+router.patch('/buses/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  const busId = Number(req.params.id);
+  const busNumber = typeof req.body?.busNumber === 'string' ? req.body.busNumber.trim() : '';
+  const routeId = Number(req.body?.routeId);
+  if (!Number.isInteger(busId) || busId < 1) {
+    return res.status(400).json({ error: 'Invalid bus ID' });
+  }
+  if (!busNumber || busNumber.length > 20) {
+    return res.status(400).json({ error: 'Enter a bus name up to 20 characters long' });
+  }
+  if (!Number.isInteger(routeId) || routeId < 1) {
+    return res.status(400).json({ error: 'Select a valid route for this bus' });
+  }
+
+  const [routes] = await pool.query('SELECT id FROM routes WHERE id = ?', [routeId]);
+  if (!routes.length) return res.status(404).json({ error: 'Route not found' });
   const [result] = await pool.query(
-    'INSERT INTO buses (bus_number, route_id) VALUES (?, ?)',
-    [busNumber, routeId || null]
+    'UPDATE buses SET bus_number = ?, route_id = ? WHERE id = ?',
+    [busNumber, routeId, busId]
   );
-  res.status(201).json({ id: result.insertId });
+  if (!result.affectedRows) {
+    const [rows] = await pool.query('SELECT id FROM buses WHERE id = ?', [busId]);
+    if (!rows.length) return res.status(404).json({ error: 'Bus not found' });
+  }
+  res.json({ id: busId, busNumber, routeId });
+});
+
+router.delete('/buses/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  const busId = Number(req.params.id);
+  if (!Number.isInteger(busId) || busId < 1) {
+    return res.status(400).json({ error: 'Invalid bus ID' });
+  }
+
+  const [result] = await pool.query('DELETE FROM buses WHERE id = ?', [busId]);
+  if (!result.affectedRows) return res.status(404).json({ error: 'Bus not found' });
+  res.json({ id: busId, deleted: true });
 });
 
 // Assign a verified tracker to a bus (admin-only)

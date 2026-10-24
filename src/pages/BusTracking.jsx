@@ -233,7 +233,9 @@ export default function BusTracking({ shareMode = false }) {
     }
   }
 
-  const stops = bus?.stops || [];
+  const stops = bus?.stops?.length
+    ? bus.stops.map((stop) => typeof stop === 'string' ? stop : stop.stop_name)
+    : (bus?.route_name || '').split(/\s*(?:→|->| - )\s*/u).filter(Boolean);
   const activeStop = useMemo(() => {
     if (!busLocation || !stops.length) return -1;
     return Math.min(stops.length - 1, Math.floor((busLocation.progress ?? 0) * stops.length));

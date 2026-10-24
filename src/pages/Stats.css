@@ -1,0 +1,23 @@
+.stats-page {
+  max-width: 720px;
+  margin: 2rem auto;
+  padding: 2rem;
+  border-radius: 1rem;
+  background: #f3f8f5;
+  box-shadow: 0 12px 30px rgba(17, 34, 25, 0.08);
+  color: #122218;
+}
+
+.stats-page h2 {
+  margin: 0 0 1rem;
+  font-size: 1.75rem;
+}
+
+.stats-page p {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.stats-page strong {
+  color: #0b5d3b;
+}

@@ -272,6 +272,33 @@ router.post('/login', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/auth/student-count
+ * Returns the total number of approved student rider accounts.
+ */
+router.get('/student-count', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+       SELECT COUNT(DISTINCT email) AS total
+  FROM users
+  WHERE email IS NOT NULL
+    AND TRIM(email) <> ''
+        
+    `);
+
+    res.status(200).json({
+      total: Number(rows[0].total),
+    });
+  } catch (error) {
+    console.error('Failed to fetch registered student count:', error);
+
+    res.status(500).json({
+      error: 'Could not load registered student count',
+    });
+  }
+});
+
+
 router.get('/pending', verifyToken, requireRole('admin'), async (req, res) => {
   try {
     const [rows] = await pool.query(
